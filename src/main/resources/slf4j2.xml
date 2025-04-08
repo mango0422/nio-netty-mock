@@ -1,20 +1,18 @@
-<!-- src/main/resources/logback.xml -->
-
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
-
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
+    <!-- com.example.nionetty 패키지에 대해 DEBUG 레벨 로깅 활성화 -->
     <logger name="com.example.nionetty" level="DEBUG" additivity="false">
         <appender-ref ref="STDOUT" />
     </logger>
 
+    <!-- 루트 로거는 INFO 레벨로 설정 -->
     <root level="INFO">
         <appender-ref ref="STDOUT" />
     </root>
-
 </configuration>

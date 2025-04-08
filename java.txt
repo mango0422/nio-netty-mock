@@ -105,6 +105,12 @@ public class ServerBootstrap {
             Channel channel = constructor.newInstance(new com.example.nionetty.channel.DefaultChannelId(),
                     new DefaultChannelConfig());
 
+
+            // 만약 채널이 NioServerSocketChannel이면 workerGroup 설정
+            if (channel instanceof NioServerSocketChannel && workerGroup != null) {
+                ((NioServerSocketChannel) channel).setWorkerGroup(workerGroup);
+            }
+
             // 채널 초기화 핸들러가 있다면 파이프라인에 추가 및 초기화
             if (channelInitializer != null) {
                 channel.pipeline().addLast(channelInitializer);
@@ -1201,7 +1207,7 @@ import java.util.Iterator;
  * @see ChannelHandler
  * @see ChannelHandlerContext
  * 
- * @author 
+ * @author
  * @version 1.0
  */
 public class ChannelPipeline {
@@ -1292,6 +1298,23 @@ public class ChannelPipeline {
     public Iterator<ChannelHandler> iterator() {
         return handlers.iterator();
     }
+
+    /**
+     * 모든 inbound 핸들러에 대해 읽기 완료 이벤트를 전달합니다.
+     */
+    public void fireChannelReadComplete() {
+        for (ChannelHandler handler : handlers) {
+            if (handler instanceof ChannelInboundHandler) {
+                try {
+                    ChannelHandlerContext ctx = new DefaultChannelHandlerContext(this, handler);
+                    ((ChannelInboundHandler) handler).channelReadComplete(ctx);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
 }
 
 
@@ -1542,17 +1565,26 @@ public class DefaultChannelPromise extends ChannelPromise {
 
 package com.example.nionetty.channel.nio;
 
+import com.example.nionetty.channel.Channel;
 import com.example.nionetty.eventloop.EventLoop;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
+import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * {@code NioEventLoop} 클래스는 NIO 기반의 이벤트 루프를 구현합니다.
  */
 public class NioEventLoop implements EventLoop {
+
+    private static final Logger logger = LoggerFactory.getLogger(NioEventLoop.class);
 
     /** NIO 셀렉터 객체 */
     private final Selector selector;
@@ -1564,25 +1596,59 @@ public class NioEventLoop implements EventLoop {
      */
     public NioEventLoop() throws IOException {
         this.selector = Selector.open();
+        logger.debug("Selector 초기화 완료");
+    }
+
+    // 새로 추가: 채널 등록 메서드
+    public void register(Channel channel) throws IOException {
+        if (channel instanceof NioSocketChannel) {
+            NioSocketChannel ns = (NioSocketChannel) channel;
+            ns.getJavaChannel().configureBlocking(false);
+            ns.getJavaChannel().register(selector, SelectionKey.OP_READ, ns);
+            logger.debug("채널 등록 완료: {}", ns.id());
+        }
     }
 
     @Override
     public void loop() {
         while (true) {
             try {
-                int readyChannels = selector.select();
+                int readyChannels = selector.select(1000);
                 if (readyChannels == 0) {
                     continue;
                 }
                 Set<java.nio.channels.SelectionKey> selectedKeys = selector.selectedKeys();
                 Iterator<java.nio.channels.SelectionKey> keyIterator = selectedKeys.iterator();
                 while (keyIterator.hasNext()) {
-                    java.nio.channels.SelectionKey key = keyIterator.next();
+                    // java.nio.channels.SelectionKey key = keyIterator.next();
                     // TODO: 각 SelectionKey에 대해 읽기/쓰기/연결 수락 이벤트 처리 로직 구현 필요
+                    SelectionKey key = keyIterator.next();
+                    if (key.isReadable()) {
+                        Object attachment = key.attachment();
+                        if (attachment instanceof NioSocketChannel) {
+                            NioSocketChannel ns = (NioSocketChannel) attachment;
+                            ByteBuffer buffer = ByteBuffer.allocate(1024);
+                            int bytesRead = ns.getJavaChannel().read(buffer);
+                            if (bytesRead > 0) {
+                                buffer.flip();
+                                byte[] data = new byte[buffer.remaining()];
+                                buffer.get(data);
+                                // 간단히 읽은 데이터를 문자열로 변환 후 파이프라인으로 전달
+                                String received = new String(data, StandardCharsets.UTF_8);
+                                logger.debug("데이터 읽음: {} (채널: {})", received, ns.id());
+                                ns.pipeline().fireChannelRead(received);
+                                ns.pipeline().fireChannelReadComplete();
+                            } else if (bytesRead < 0) {
+                                // 클라이언트 종료 시 채널 닫기
+                                logger.warn("채널 종료 감지 (읽기 -1): {}", ns.id());
+                                ns.close();
+                            }
+                        }
+                    }
                     keyIterator.remove();
                 }
             } catch (IOException e) {
-                e.printStackTrace();
+                logger.error("NioEventLoop 오류", e);
                 break;
             }
         }
@@ -1592,8 +1658,10 @@ public class NioEventLoop implements EventLoop {
     public void shutdown() {
         try {
             selector.close();
+            logger.info("NioEventLoop 셀렉터 종료");
         } catch (IOException e) {
             e.printStackTrace();
+
         }
     }
 
@@ -1702,8 +1770,17 @@ import com.example.nionetty.channel.AbstractChannel;
 import com.example.nionetty.channel.ChannelConfig;
 import com.example.nionetty.channel.ChannelFuture;
 import com.example.nionetty.channel.ChannelId;
+import com.example.nionetty.channel.DefaultChannelConfig;
+import com.example.nionetty.channel.DefaultChannelId;
+import com.example.nionetty.eventloop.EventLoop;
+import com.example.nionetty.eventloop.EventLoopGroup;
+
 import java.net.SocketAddress;
 import java.nio.channels.ServerSocketChannel;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 
 /**
@@ -1713,10 +1790,17 @@ import java.io.IOException;
  */
 public class NioServerSocketChannel extends AbstractChannel {
 
+    private static final Logger logger = LoggerFactory.getLogger(NioServerSocketChannel.class);
+
     private ServerSocketChannel javaChannel;
+    private EventLoopGroup workerGroup;
 
     public NioServerSocketChannel(ChannelId id, ChannelConfig config) {
         super(id, config);
+    }
+
+    public void setWorkerGroup(EventLoopGroup workerGroup) {
+        this.workerGroup = workerGroup;
     }
 
     @Override
@@ -1724,11 +1808,49 @@ public class NioServerSocketChannel extends AbstractChannel {
         ChannelFuture future = new ChannelFuture();
         try {
             // ServerSocketChannel 생성 및 비블로킹 모드 설정
+            logger.info("서버 소켓을 {}에 바인딩 중...", localAddress);
             javaChannel = ServerSocketChannel.open();
             javaChannel.configureBlocking(false);
             javaChannel.socket().bind(localAddress);
             future.setSuccess().setChannel(this);
+            logger.info("서버 소켓 바인딩 성공: {}", localAddress);
+
+            // 바인딩 성공 후, 클라이언트 연결을 수락할 수 있도록
+            // 별도의 스레드에서 acceptor 로직 실행
+            new Thread(() -> {
+                logger.info("Acceptor 스레드 시작");
+                while (true) {
+                    try {
+                        // accept()는 non-blocking 모드이므로 연결이 없으면 null을 반환함
+                        java.nio.channels.SocketChannel clientChannel = javaChannel.accept();
+                        if (clientChannel != null) {
+                            logger.info("Accepted connection from {}", clientChannel.getRemoteAddress());
+                            // 수락된 클라이언트 채널을 NioSocketChannel로 감싸기
+                            // TODO: 실제 구현에서는 bossGroup -> workerGroup으로 연결 전달 및 채널 초기화 진행
+                            // 예제에서는 단순히 수락만 로그로 출력함.
+
+                            // 만약 NioSocketChannel로 감싸고 싶다면, 새로운 NioSocketChannel 생성 시
+                            // 해당 clientChannel을 활용하는 생성자를 정의하고 호출해야 합니다.
+                            // 새 NioSocketChannel 생성 (수락된 clientChannel 사용)
+                            NioSocketChannel ns = new NioSocketChannel(new DefaultChannelId(),
+                                    new DefaultChannelConfig(), clientChannel);
+                            // (원한다면 채널 초기화를 위한 childHandler를 호출할 수 있음)
+                            // workerGroup에서 이벤트 루프를 얻어 등록
+                            EventLoop worker = workerGroup.next();
+                            logger.debug("Worker EventLoop 선택: {}", worker);
+                            // Cast worker to NioEventLoop to use register() method
+                            ((NioEventLoop) worker).register(ns);
+                        } else {
+                            // 연결이 없으면 잠시 대기 (예: 50ms)
+                            Thread.sleep(50);
+                        }
+                    } catch (Exception ex) {
+                        logger.error("Acceptor 스레드 오류", ex);
+                    }
+                }
+            }, "Acceptor-Thread").start();
         } catch (IOException e) {
+            logger.error("서버 소켓 바인딩 중 오류", e);
             future.setFailure(e);
         }
         return future;
@@ -1744,7 +1866,9 @@ public class NioServerSocketChannel extends AbstractChannel {
             // 채널 종료 후 closeFuture를 성공으로 처리
             closeFuture.setSuccess();
             future.setSuccess();
+            logger.info("서버 소켓 채널 종료 완료");
         } catch (IOException e) {
+            logger.error("서버 소켓 채널 종료 중 오류", e);
             future.setFailure(e);
         }
         return future;
@@ -1753,7 +1877,7 @@ public class NioServerSocketChannel extends AbstractChannel {
     @Override
     public ChannelFuture write(Object msg) {
         // 서버 소켓 채널에서는 일반적으로 write 연산이 없으므로, 단순 로그 출력
-        System.out.println("NioServerSocketChannel write invoked with message: " + msg);
+        logger.debug("NioServerSocketChannel write invoked with message: {}", msg);
         return new ChannelFuture().setSuccess();
     }
 }
@@ -1769,6 +1893,10 @@ import com.example.nionetty.channel.ChannelFuture;
 import com.example.nionetty.channel.ChannelId;
 import java.net.SocketAddress;
 import java.nio.channels.SocketChannel;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 
 /**
@@ -1778,22 +1906,36 @@ import java.io.IOException;
  */
 public class NioSocketChannel extends AbstractChannel {
 
+    private static final Logger logger = LoggerFactory.getLogger(NioSocketChannel.class);
+
     private SocketChannel javaChannel;
 
     public NioSocketChannel(ChannelId id, ChannelConfig config) {
         super(id, config);
     }
 
+    public NioSocketChannel(ChannelId id, ChannelConfig config, SocketChannel javaChannel) {
+        super(id, config);
+        this.javaChannel = javaChannel;
+    }
+
+    public SocketChannel getJavaChannel() {
+        return javaChannel;
+    }
+
     @Override
     public ChannelFuture bind(SocketAddress localAddress) {
         ChannelFuture future = new ChannelFuture();
         try {
+            logger.info("클라이언트 소켓 채널을 {}에 바인딩 시도", localAddress);
             // SocketChannel 생성 및 비블로킹 모드 설정
             javaChannel = SocketChannel.open();
             javaChannel.configureBlocking(false);
             javaChannel.bind(localAddress);
             future.setSuccess().setChannel(this);
+            logger.info("클라이언트 소켓 채널 바인딩 성공: {}", localAddress);
         } catch (IOException e) {
+            logger.error("클라이언트 소켓 채널 바인딩 실패", e);
             future.setFailure(e);
         }
         return future;
@@ -1808,7 +1950,9 @@ public class NioSocketChannel extends AbstractChannel {
             }
             closeFuture.setSuccess();
             future.setSuccess();
+            logger.info("클라이언트 소켓 채널 종료 성공");
         } catch (IOException e) {
+            logger.error("클라이언트 소켓 채널 종료 실패", e);
             future.setFailure(e);
         }
         return future;
@@ -1817,7 +1961,7 @@ public class NioSocketChannel extends AbstractChannel {
     @Override
     public ChannelFuture write(Object msg) {
         // 간단한 임시 구현: 메시지를 문자열로 변환하여 콘솔에 출력
-        System.out.println("NioSocketChannel writing: " + msg);
+        logger.debug("NioSocketChannel writing message: {}", msg);
         // 실제 구현에서는 javaChannel.write(ByteBuffer.wrap(...)) 등을 사용
         return new ChannelFuture().setSuccess().setChannel(this);
     }

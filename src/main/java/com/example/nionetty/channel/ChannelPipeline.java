@@ -18,7 +18,7 @@ import java.util.Iterator;
  * @see ChannelHandler
  * @see ChannelHandlerContext
  * 
- * @author 
+ * @author
  * @version 1.0
  */
 public class ChannelPipeline {
@@ -109,4 +109,21 @@ public class ChannelPipeline {
     public Iterator<ChannelHandler> iterator() {
         return handlers.iterator();
     }
+
+    /**
+     * 모든 inbound 핸들러에 대해 읽기 완료 이벤트를 전달합니다.
+     */
+    public void fireChannelReadComplete() {
+        for (ChannelHandler handler : handlers) {
+            if (handler instanceof ChannelInboundHandler) {
+                try {
+                    ChannelHandlerContext ctx = new DefaultChannelHandlerContext(this, handler);
+                    ((ChannelInboundHandler) handler).channelReadComplete(ctx);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
 }

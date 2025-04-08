@@ -103,6 +103,12 @@ public class ServerBootstrap {
             Channel channel = constructor.newInstance(new com.example.nionetty.channel.DefaultChannelId(),
                     new DefaultChannelConfig());
 
+
+            // 만약 채널이 NioServerSocketChannel이면 workerGroup 설정
+            if (channel instanceof NioServerSocketChannel && workerGroup != null) {
+                ((NioServerSocketChannel) channel).setWorkerGroup(workerGroup);
+            }
+
             // 채널 초기화 핸들러가 있다면 파이프라인에 추가 및 초기화
             if (channelInitializer != null) {
                 channel.pipeline().addLast(channelInitializer);
