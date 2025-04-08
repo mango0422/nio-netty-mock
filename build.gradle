@@ -1,0 +1,51 @@
+// build.gradle (using Groovy DSL)
+
+plugins {
+    id 'java'             // Apply the java plugin to add support for Java
+    id 'application'     // Apply the application plugin to easily run the app
+}
+
+group = 'com.example.nionetty' // Replace with your desired group ID
+version = '1.0-SNAPSHOT'     // Initial version
+
+repositories {
+    mavenCentral()      // Use Maven Central for resolving dependencies
+}
+
+dependencies {
+    // Logging Facade (SLF4J API) - The interface your code will use
+    implementation 'org.slf4j:slf4j-api:2.0.13' // Use a recent stable version (as of early 2025)
+
+    // Logging Implementation (Logback) - The engine that actually performs logging
+    // 'runtimeOnly' means it's needed at runtime, but not for compilation against the API
+    runtimeOnly 'ch.qos.logback:logback-classic:1.5.6' // Use a recent stable version compatible with SLF4J 2.x (as of early 2025)
+
+    // Testing Framework (JUnit 5) - Optional, but good practice
+    testImplementation platform('org.junit:junit-bom:5.10.2') // JUnit Bill of Materials for consistent versions
+    testImplementation 'org.junit.jupiter:junit-jupiter-api'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
+}
+
+// Configure the application plugin
+application {
+    // Define the main class that starts your server or application
+    // We'll define this class later, replace with your actual main class path
+    // Example: mainClass = 'com.example.nionetty.bootstrap.NioServer'
+    mainClass = 'com.example.nionetty.bootstrap.ServerBootstrapRunner' // Placeholder, adjust as needed
+}
+
+// Set Java version compatibility
+java {
+    sourceCompatibility = JavaVersion.VERSION_17 // Or JavaVersion.VERSION_11 or higher
+    targetCompatibility = JavaVersion.VERSION_17 // Or JavaVersion.VERSION_11 or higher
+}
+
+// Configure JUnit 5 test task
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// Optional: Ensure UTF-8 encoding for source files
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}

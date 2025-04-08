@@ -1,0 +1,2344 @@
+// ./src/main/java/com/example/nionetty/bootstrap/ServerBootstrap.java
+
+package com.example.nionetty.bootstrap;
+
+import com.example.nionetty.channel.Channel;
+import com.example.nionetty.channel.ChannelFuture;
+import com.example.nionetty.channel.ChannelInitializer;
+import com.example.nionetty.channel.DefaultChannelConfig;
+import com.example.nionetty.channel.DefaultChannelId;
+import com.example.nionetty.channel.nio.NioServerSocketChannel;
+import com.example.nionetty.eventloop.EventLoopGroup;
+
+import java.lang.reflect.Constructor;
+import java.net.InetSocketAddress;
+
+/**
+ * {@code ServerBootstrap} 클래스는 Netty 스타일 서버를 초기화하는
+ * 부트스트랩 역할을 수행합니다.
+ * <p>
+ * 이 클래스는 이벤트 루프 그룹, 채널 클래스, 채널 초기화 핸들러 등을 설정하고,
+ * 서버의 바인딩 및 실행을 관리합니다.
+ * </p>
+ */
+public class ServerBootstrap {
+
+    /** 클라이언트 연결 수락을 담당하는 boss 이벤트 루프 그룹 */
+    private EventLoopGroup bossGroup;
+
+    /** 클라이언트 I/O 처리를 담당하는 worker 이벤트 루프 그룹 */
+    private EventLoopGroup workerGroup;
+
+    /** 서버 채널의 구현 클래스 (예: {@code NioServerSocketChannel.class}) */
+    private Class<?> channelClass;
+
+    /** 신규 채널 초기화를 위한 핸들러 */
+    private ChannelInitializer<?> channelInitializer;
+
+    /**
+     * 기본 생성자.
+     */
+    public ServerBootstrap() {
+        // 내부 변수는 설정 메서드를 통해 초기화됨.
+    }
+
+    /**
+     * 이벤트 루프 그룹을 설정합니다.
+     *
+     * @param bossGroup   클라이언트 연결 수락용 이벤트 루프 그룹
+     * @param workerGroup 클라이언트 I/O 처리를 위한 이벤트 루프 그룹
+     * @return 현재 {@code ServerBootstrap} 인스턴스 (빌더 패턴 지원)
+     */
+    public ServerBootstrap group(EventLoopGroup bossGroup, EventLoopGroup workerGroup) {
+        this.bossGroup = bossGroup;
+        this.workerGroup = workerGroup;
+        return this;
+    }
+
+    /**
+     * 사용할 서버 채널 클래스를 설정합니다.
+     *
+     * @param channelClass 서버 채널의 클래스 (예: {@code NioServerSocketChannel.class})
+     * @return 현재 {@code ServerBootstrap} 인스턴스
+     */
+    public ServerBootstrap channel(Class<?> channelClass) {
+        this.channelClass = channelClass;
+        return this;
+    }
+
+    /**
+     * 채널 초기화 핸들러를 설정합니다.
+     * <p>
+     * 이 핸들러는 클라이언트와의 새로운 연결이 생성될 때마다 호출되어,
+     * 해당 채널의 파이프라인 구성을 담당합니다.
+     * </p>
+     *
+     * @param channelInitializer 채널 초기화를 위한 핸들러
+     * @return 현재 {@code ServerBootstrap} 인스턴스
+     */
+    public ServerBootstrap childHandler(ChannelInitializer<?> channelInitializer) {
+        this.channelInitializer = channelInitializer;
+        return this;
+    }
+
+    /**
+     * 지정한 포트로 서버를 바인딩하여 실행합니다.
+     * <p>
+     * 실제 구현에서는 bossGroup을 이용하여 서버 소켓 채널을 생성하고, 채널 초기화 핸들러
+     * 를 이용해 새로 생성된 채널에 초기 설정을 적용한 후 workerGroup에 분배해야 합니다.
+     * 여기는 최소 구현 예제로 채널 생성과 초기화, 그리고 바인딩만 처리합니다.
+     * </p>
+     *
+     * @param port 서버가 바인딩할 포트 번호
+     * @return 채널 바인딩 결과를 나타내는 {@code ChannelFuture} 객체
+     */
+    public ChannelFuture bind(int port) {
+        ChannelFuture future;
+        try {
+            // channelClass가 Channel 인터페이스의 구현체(예: NioServerSocketChannel)라고 가정
+            @SuppressWarnings("unchecked")
+            Constructor<? extends Channel> constructor =
+                    (Constructor<? extends Channel>) channelClass.getConstructor(
+                            com.example.nionetty.channel.ChannelId.class,
+                            com.example.nionetty.channel.ChannelConfig.class);
+            // DefaultChannelId, DefaultChannelConfig를 이용해 채널 생성
+            Channel channel = constructor.newInstance(new com.example.nionetty.channel.DefaultChannelId(),
+                    new DefaultChannelConfig());
+
+            // 채널 초기화 핸들러가 있다면 파이프라인에 추가 및 초기화
+            if (channelInitializer != null) {
+                channel.pipeline().addLast(channelInitializer);
+                // ChannelInitializer 내부에서는 initChannel() 호출 후 자신을 제거하도록 구현되어 있음.
+            }
+
+            // 실제 채널 바인딩: InetSocketAddress로 포트 설정
+            future = channel.bind(new InetSocketAddress(port));
+        } catch (Exception e) {
+            future = new ChannelFuture().setFailure(e);
+        }
+        return future;
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/bootstrap/ServerBootstrapRunner.java
+
+package com.example.nionetty.bootstrap;
+
+import com.example.nionetty.channel.Channel;
+import com.example.nionetty.channel.ChannelFuture;
+import com.example.nionetty.channel.ChannelInitializer;
+import com.example.nionetty.channel.nio.NioServerSocketChannel;
+import com.example.nionetty.eventloop.EventLoopGroup;
+import com.example.nionetty.channel.nio.NioEventLoopGroup;
+import com.example.nionetty.handler.EchoServerHandler;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * {@code ServerBootstrapRunner} 클래스는 애플리케이션의 진입점(main 메서드)이며,
+ * {@code ServerBootstrap}을 이용하여 서버를 초기화하고 실행합니다.
+ */
+public class ServerBootstrapRunner {
+
+    private static final Logger logger = LoggerFactory.getLogger(ServerBootstrapRunner.class);
+
+    /**
+     * 애플리케이션의 메인 메서드.
+     *
+     * @param args 커맨드 라인 인자들
+     */
+    public static void main(String[] args) {
+        logger.info("서버 부트스트랩 시작...");
+        try {
+            // bossGroup: 클라이언트 연결 수락 전용 이벤트 루프 그룹 (단일 스레드 사용)
+            EventLoopGroup bossGroup = new NioEventLoopGroup(1);
+            // workerGroup: 클라이언트 I/O 처리를 위한 이벤트 루프 그룹 (기본 스레드 수)
+            EventLoopGroup workerGroup = new NioEventLoopGroup();
+
+            // 서버 부트스트랩 구성 및 실행
+            ChannelFuture future = new ServerBootstrap()
+                    .group(bossGroup, workerGroup)
+                    .channel(NioServerSocketChannel.class)
+                    .childHandler(new ChannelInitializer<Channel>() {
+                        /**
+                         * 각 클라이언트 채널 초기화 시 호출되어 파이프라인을 구성합니다.
+                         *
+                         * @param ch 초기화할 채널
+                         * @throws Exception 초기화 중 발생 가능한 예외
+                         */
+                        @Override
+                        protected void initChannel(Channel ch) throws Exception {
+                            // 채널 파이프라인에 예제 에코 핸들러를 추가합니다.
+                            ch.pipeline().addLast(new EchoServerHandler());
+                        }
+                    })
+                    .bind(8080); // 8080 포트에 바인딩
+
+            // 바인딩 완료 후 채널 객체를 받아오기
+            Channel channel = future.sync().channel();
+            logger.info("서버가 포트 8080에 성공적으로 바인딩되었습니다.");
+
+            // 채널 종료가 발생할 때까지 메인 스레드 블로킹
+            channel.closeFuture().sync();
+
+            logger.info("서버가 포트 8080에 성공적으로 바인딩되었습니다.");
+        } catch (Exception e) {
+            logger.error("서버 부트스트랩 중 오류 발생", e);
+            Thread.currentThread().interrupt();
+        }
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/buffer/CustomBuffer.java
+
+package com.example.nionetty.buffer;
+
+/**
+ * {@code CustomBuffer} 클래스는 효율적인 네트워크 I/O 처리를 위해
+ * 사용자 정의 버퍼를 구현한 클래스입니다.
+ * <p>
+ * 내부적으로 바이트 배열을 사용하여 데이터를 저장하며, 필요 시 자동으로
+ * 버퍼 용량을 확장합니다. 또한 읽기/쓰기 인덱스를 관리하여 데이터의 흐름을 제어합니다.
+ * </p>
+ *
+ * 주요 기능:
+ * <ul>
+ * <li>데이터 쓰기 및 읽기</li>
+ * <li>쓰기 가능 공간 확보를 위한 자동 버퍼 확장</li>
+ * <li>읽기/쓰기 인덱스 리셋 기능</li>
+ * </ul>
+ *
+ * @author
+ * @version 1.0
+ */
+public class CustomBuffer {
+
+    /** 내부 바이트 배열 버퍼 */
+    private byte[] buffer;
+    /** 읽기 인덱스 */
+    private int readIndex;
+    /** 쓰기 인덱스 */
+    private int writeIndex;
+
+    /**
+     * 기본 생성자.
+     * 기본 버퍼 크기를 1024 바이트로 초기화합니다.
+     */
+    public CustomBuffer() {
+        this(1024);
+    }
+
+    /**
+     * 지정된 용량으로 {@code CustomBuffer}를 초기화합니다.
+     *
+     * @param capacity 초기 버퍼 용량 (바이트 단위)
+     * @throws IllegalArgumentException 용량이 0 이하일 경우
+     */
+    public CustomBuffer(int capacity) {
+        if (capacity <= 0) {
+            throw new IllegalArgumentException("Buffer capacity must be positive");
+        }
+        this.buffer = new byte[capacity];
+        this.readIndex = 0;
+        this.writeIndex = 0;
+    }
+
+    /**
+     * 주어진 데이터를 버퍼에 기록합니다.
+     *
+     * @param data 기록할 바이트 배열 데이터
+     * @return 실제로 기록된 바이트 수
+     */
+    public int write(byte[] data) {
+        int length = data.length;
+        ensureWritable(length);
+        System.arraycopy(data, 0, buffer, writeIndex, length);
+        writeIndex += length;
+        return length;
+    }
+
+    /**
+     * 버퍼에서 지정된 길이의 데이터를 읽어옵니다.
+     *
+     * @param length 읽어올 바이트 수
+     * @return 읽어온 데이터가 담긴 바이트 배열
+     */
+    public byte[] read(int length) {
+        int available = writeIndex - readIndex;
+        if (length > available) {
+            length = available;
+        }
+        byte[] output = new byte[length];
+        System.arraycopy(buffer, readIndex, output, 0, length);
+        readIndex += length;
+        return output;
+    }
+
+    /**
+     * 버퍼에 추가 데이터를 기록할 공간이 부족할 경우, 내부 버퍼 용량을 확장합니다.
+     *
+     * @param minWritableBytes 필요한 추가 공간 (바이트 단위)
+     */
+    private void ensureWritable(int minWritableBytes) {
+        if (writeIndex + minWritableBytes > buffer.length) {
+            // 현재 용량 부족: 기존 용량의 2배 또는 최소 필요한 크기 중 큰 값으로 확장
+            int newCapacity = Math.max(buffer.length * 2, writeIndex + minWritableBytes);
+            byte[] newBuffer = new byte[newCapacity];
+            System.arraycopy(buffer, 0, newBuffer, 0, writeIndex);
+            buffer = newBuffer;
+        }
+    }
+
+    /**
+     * 읽기/쓰기 인덱스를 리셋하여 버퍼를 재사용할 수 있도록 합니다.
+     * <p>
+     * 이 메서드를 호출하면 이전 데이터는 논리적으로 삭제되며, 이후 쓰기 작업은
+     * 버퍼의 시작부분부터 이루어집니다.
+     * </p>
+     */
+    public void reset() {
+        readIndex = 0;
+        writeIndex = 0;
+    }
+
+    /**
+     * 현재 읽기 가능한 바이트 수를 반환합니다.
+     *
+     * @return 읽기 가능한 바이트 수
+     */
+    public int readableBytes() {
+        return writeIndex - readIndex;
+    }
+
+    /**
+     * 버퍼의 전체 용량(현재 할당된 크기)을 반환합니다.
+     *
+     * @return 버퍼의 전체 용량 (바이트 단위)
+     */
+    public int capacity() {
+        return buffer.length;
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/AbstractChannel.java
+
+package com.example.nionetty.channel;
+
+import java.net.SocketAddress;
+
+/**
+ * {@code AbstractChannel} 클래스는 {@link Channel} 인터페이스의 기본 구현을 제공하며,
+ * 서버 및 클라이언트 채널의 공통 동작을 캡슐화합니다.
+ */
+public abstract class AbstractChannel implements Channel {
+
+    /** 채널 고유의 식별자 */
+    private final ChannelId id;
+
+    /** 채널 설정 객체 */
+    protected final ChannelConfig config;
+
+    /** 채널의 파이프라인 */
+    protected final ChannelPipeline pipeline;
+
+    /** 채널이 닫힐 때까지 대기하는 Future 객체 */
+    protected final ChannelFuture closeFuture = new ChannelFuture();
+
+    /**
+     * 생성자.
+     * 하위 클래스는 이 생성자를 통해 기본 채널 ID와 채널 설정 및 파이프라인을 초기화합니다.
+     *
+     * @param id     이 채널의 고유 식별자
+     * @param config 이 채널의 설정 객체
+     */
+    public AbstractChannel(ChannelId id, ChannelConfig config) {
+        this.id = id;
+        this.config = config;
+        // 기본 파이프라인 초기화 (구체적인 구현체에서 세부 설정 필요)
+        this.pipeline = new DefaultChannelPipeline(this);
+    }
+
+    /**
+     * 채널의 고유 식별자를 반환합니다.
+     *
+     * @return 채널 식별자 {@link ChannelId}
+     */
+    @Override
+    public ChannelId id() {
+        return this.id;
+    }
+
+    /**
+     * 채널 설정 정보를 반환합니다.
+     *
+     * @return 채널 설정 {@link ChannelConfig}
+     */
+    @Override
+    public ChannelConfig config() {
+        return this.config;
+    }
+
+    /**
+     * 채널 파이프라인을 반환합니다.
+     *
+     * @return 채널 파이프라인 {@link ChannelPipeline}
+     */
+    @Override
+    public ChannelPipeline pipeline() {
+        return this.pipeline;
+    }
+
+    @Override
+    public ChannelFuture closeFuture() {
+        return closeFuture;
+    }
+
+    /**
+     * 지정한 로컬 주소에 채널을 바인딩합니다.
+     * 구체적인 바인딩 로직은 하위 클래스에서 구현해야 합니다.
+     *
+     * @param localAddress 로컬 소켓 주소
+     * @return 바인딩 결과를 나타내는 {@link ChannelFuture} 객체
+     */
+    @Override
+    public abstract ChannelFuture bind(SocketAddress localAddress);
+
+    /**
+     * 채널을 닫고 모든 연결을 종료합니다.
+     * 구체적인 종료 로직은 하위 클래스에서 구현해야 합니다.
+     *
+     * @return 채널 닫기 결과를 나타내는 {@link ChannelFuture} 객체
+     */
+    @Override
+    public abstract ChannelFuture close();
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/Channel.java
+
+package com.example.nionetty.channel;
+
+import java.net.SocketAddress;
+
+/**
+ * {@code Channel} 인터페이스는 네트워크 I/O를 위한 기본 추상화를 제공하며,
+ * 채널이 수행해야 하는 필수 기능들을 정의합니다.
+ * <p>
+ * 각 채널은 고유 식별자, 설정 정보, 파이프라인 등과 함께 데이터를 기록하는 기능도 제공합니다.
+ * </p>
+ */
+public interface Channel {
+
+    /**
+     * 채널의 고유 식별자를 반환합니다.
+     *
+     * @return {@link ChannelId} 객체
+     */
+    ChannelId id();
+
+    /**
+     * 채널의 설정 정보를 반환합니다.
+     *
+     * @return {@link ChannelConfig} 객체
+     */
+    ChannelConfig config();
+
+    /**
+     * 채널에 연결된 파이프라인을 반환합니다.
+     *
+     * @return {@link ChannelPipeline} 객체
+     */
+    ChannelPipeline pipeline();
+
+    /**
+     * 지정한 로컬 주소에 채널을 바인딩합니다.
+     *
+     * @param localAddress 로컬 소켓 주소
+     * @return 바인딩 결과를 나타내는 {@link ChannelFuture} 객체
+     */
+    ChannelFuture bind(SocketAddress localAddress);
+
+    /**
+     * 채널을 닫고 모든 관련 자원을 해제합니다.
+     *
+     * @return 채널 닫기 결과를 나타내는 {@link ChannelFuture} 객체
+     */
+    ChannelFuture close();
+
+    /**
+     * 채널에 데이터를 기록(write)하는 메서드.
+     *
+     * @param msg 전송할 메시지 객체
+     * @return 기록 결과를 나타내는 {@link ChannelFuture} 객체
+     */
+    ChannelFuture write(Object msg);
+
+    /**
+     * 채널 종료 후의 Future를 반환합니다.
+     * 채널이 닫힐 때까지 대기할 수 있습니다.
+     *
+     * @return 채널 종료 결과를 나타내는 {@link ChannelFuture} 객체
+     */
+    ChannelFuture closeFuture();
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelConfig.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code ChannelConfig} 인터페이스는 채널의 동작을 구성하기 위한 옵션들을 정의합니다.
+ * <p>
+ * 소켓 옵션, 타임아웃, 버퍼 크기 등 네트워크 I/O 성능에 영향을 미치는 다양한 설정값들을 다룹니다.
+ * 구체적인 구현은 {@link DefaultChannelConfig} 등에서 이루어집니다.
+ * </p>
+ *
+ * @param <T> 옵션 값의 타입
+ * 
+ * @author 
+ * @version 1.0
+ */
+public interface ChannelConfig {
+
+    /**
+     * 지정한 옵션의 값을 설정합니다.
+     *
+     * @param option 옵션 객체 {@link ChannelOption}
+     * @param value  설정할 값
+     * @param <T>    옵션 값의 타입
+     */
+    <T> void setOption(ChannelOption<T> option, T value);
+
+    /**
+     * 지정한 옵션의 현재 값을 반환합니다.
+     *
+     * @param option 옵션 객체 {@link ChannelOption}
+     * @param <T>    옵션 값의 타입
+     * @return 해당 옵션의 현재 값
+     */
+    <T> T getOption(ChannelOption<T> option);
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelException.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code ChannelException} 클래스는 채널 관련 작업 수행 중 발생하는
+ * 예외 상황을 나타내는 런타임 예외입니다.
+ * <p>
+ * 이 예외는 채널 초기화, 바인딩, 데이터 전송 등 다양한 채널 작업 중 발생할 수 있으며,
+ * 구체적인 원인 분석과 디버깅에 도움을 주도록 설계되었습니다.
+ * </p>
+ *
+ * @author
+ * @version 1.0
+ */
+public class ChannelException extends RuntimeException {
+
+    /**
+     * 예외 메시지와 함께 {@code ChannelException}을 생성합니다.
+     *
+     * @param message 예외의 상세 메시지
+     */
+    public ChannelException(String message) {
+        super(message);
+    }
+
+    /**
+     * 예외 메시지와 원인 예외(cause)를 함께 제공하여 {@code ChannelException}을 생성합니다.
+     *
+     * @param message 예외의 상세 메시지
+     * @param cause   원인 예외
+     */
+    public ChannelException(String message, Throwable cause) {
+        super(message, cause);
+    }
+
+    /**
+     * 원인 예외(cause)만을 인자로 하여 {@code ChannelException}을 생성합니다.
+     *
+     * @param cause 원인 예외
+     */
+    public ChannelException(Throwable cause) {
+        super(cause);
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelFuture.java
+
+package com.example.nionetty.channel;
+
+import com.example.nionetty.util.Future;
+
+/**
+ * {@code ChannelFuture} 클래스는 채널의 비동기 작업 결과를 나타내는 객체입니다.
+ */
+public class ChannelFuture implements Future {
+
+    // 하위 클래스에서 접근할 수 있도록 protected로 변경
+    protected volatile boolean success;
+    protected volatile Throwable cause;
+    protected final Object lock = new Object();
+
+    // 채널과 연결된 ChannelFuture로서 채널 정보를 보관
+    private Channel channel;
+
+    /**
+     * 생성자. 초기 상태는 미완료입니다.
+     */
+    public ChannelFuture() {
+        this.success = false;
+        this.cause = null;
+    }
+
+    /**
+     * 채널 정보를 설정합니다.
+     *
+     * @param channel 연관된 채널
+     * @return 현재 {@code ChannelFuture} 인스턴스
+     */
+    public ChannelFuture setChannel(Channel channel) {
+        this.channel = channel;
+        return this;
+    }
+
+    /**
+     * 채널 정보를 반환합니다.
+     *
+     * @return 연관된 {@link Channel} 객체, 설정되어 있지 않으면 null
+     */
+    public Channel channel() {
+        return channel;
+    }
+
+    /**
+     * 작업이 성공적으로 완료되었음을 설정하고 대기 중인 스레드를 깨웁니다.
+     *
+     * @return 현재 {@code ChannelFuture} 인스턴스
+     */
+    public ChannelFuture setSuccess() {
+        synchronized (lock) {
+            this.success = true;
+            lock.notifyAll();
+        }
+        return this;
+    }
+
+    /**
+     * 작업 실패 시, 원인 예외를 설정하고 대기 중인 스레드를 깨웁니다.
+     *
+     * @param cause 작업 실패 원인 예외
+     * @return 현재 {@code ChannelFuture} 인스턴스
+     */
+    public ChannelFuture setFailure(Throwable cause) {
+        synchronized (lock) {
+            this.cause = cause;
+            lock.notifyAll();
+        }
+        return this;
+    }
+
+    @Override
+    public ChannelFuture sync() throws InterruptedException {
+        synchronized (lock) {
+            while (!isDone()) {
+                lock.wait();
+            }
+        }
+        return this;
+    }
+
+    @Override
+    public boolean isDone() {
+        return success || (cause != null);
+    }
+
+    @Override
+    public boolean isSuccess() {
+        return success;
+    }
+
+    @Override
+    public Throwable getCause() {
+        return cause;
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelHandler.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code ChannelHandler} 인터페이스는 채널의 이벤트(데이터 읽기, 쓰기, 연결 등)를 처리하기 위한 기본
+ * 핸들러 역할을 정의합니다.
+ * <p>
+ * 이 인터페이스를 구현함으로써 사용자 정의 채널 핸들러를 작성할 수 있으며,
+ * Netty와 유사한 파이프라인 구조 내에서 이벤트 처리 로직을 캡슐화할 수 있습니다.
+ * </p>
+ *
+ * @see ChannelHandlerContext
+ * 
+ * @author
+ * @version 1.0
+ */
+public interface ChannelHandler {
+
+    /**
+     * 핸들러가 채널 파이프라인에 추가될 때 호출됩니다.
+     *
+     * @param ctx 핸들러 컨텍스트
+     * @throws Exception 핸들러 추가 중 발생하는 예외
+     */
+    default void handlerAdded(ChannelHandlerContext ctx) throws Exception {
+        // 기본 구현은 아무 것도 하지 않음.
+    }
+
+    /**
+     * 핸들러가 채널 파이프라인에서 제거될 때 호출됩니다.
+     *
+     * @param ctx 핸들러 컨텍스트
+     * @throws Exception 핸들러 제거 중 발생하는 예외
+     */
+    default void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
+        // 기본 구현은 아무 것도 하지 않음.
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelHandlerContext.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code ChannelHandlerContext} 인터페이스는 채널 핸들러와 채널 파이프라인 사이의 중개자 역할을 수행합니다.
+ */
+public interface ChannelHandlerContext {
+
+    /**
+     * 현재 채널 파이프라인에서 다음 핸들러에게 읽기 이벤트를 전달합니다.
+     *
+     * @param msg 읽은 메시지 객체
+     */
+    void fireChannelRead(Object msg);
+
+    /**
+     * 현재 채널을 통해 데이터를 기록하고 전송합니다.
+     *
+     * @param msg 전송할 메시지 객체
+     * @return 전송 결과를 나타내는 {@link ChannelFuture} 객체
+     */
+    ChannelFuture write(Object msg);
+
+    /**
+     * 현재 채널 파이프라인의 다음 핸들러에게 예외 이벤트를 전달합니다.
+     *
+     * @param cause 발생한 예외
+     */
+    void fireExceptionCaught(Throwable cause);
+
+    /**
+     * 현재 채널에 연결된 파이프라인을 반환합니다.
+     *
+     * @return {@link ChannelPipeline} 객체
+     */
+    ChannelPipeline pipeline();
+
+    /**
+     * 현재 채널을 반환합니다.
+     *
+     * @return 현재 채널 {@link Channel} 객체
+     */
+    Channel channel();
+
+    /**
+     * 읽기 완료 이벤트를 다음 핸들러로 전달합니다.
+     */
+    void fireChannelReadComplete();
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelId.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code ChannelId} 인터페이스는 채널의 고유 식별자를 정의합니다.
+ * <p>
+ * 각 채널은 생성 시 고유한 식별자를 할당받으며, 이 식별자는 로깅, 디버깅, 채널 상태 추적 등에 활용됩니다.
+ * </p>
+ *
+ * @author 
+ * @version 1.0
+ */
+public interface ChannelId {
+
+    /**
+     * 채널의 짧은 식별자 문자열을 반환합니다.
+     *
+     * @return 채널의 짧은 식별자 문자열
+     */
+    String asShortText();
+
+    /**
+     * 채널의 전체 식별자 문자열을 반환합니다.
+     *
+     * @return 채널의 전체 식별자 문자열
+     */
+    String asLongText();
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelInboundHandler.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code ChannelInboundHandler} 인터페이스는 인바운드 이벤트(예: 데이터 읽기, 채널 활성화/비활성화, 예외 처리)를 처리하기 위한 메서드들을 정의합니다.
+ * <p>
+ * 이 인터페이스를 구현하여 커스텀 인바운드 핸들러를 작성할 수 있으며, 채널 파이프라인 내에서 이벤트 흐름을 처리할 수 있습니다.
+ * </p>
+ *
+ * @see ChannelHandler
+ * @see ChannelHandlerContext
+ * 
+ * @author 
+ * @version 1.0
+ */
+public interface ChannelInboundHandler extends ChannelHandler {
+
+    /**
+     * 채널이 활성화 되었을 때 호출됩니다.
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @throws Exception 활성화 처리 중 발생할 수 있는 예외
+     */
+    void channelActive(ChannelHandlerContext ctx) throws Exception;
+
+    /**
+     * 채널이 비활성화 되었을 때 호출됩니다.
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @throws Exception 비활성화 처리 중 발생할 수 있는 예외
+     */
+    void channelInactive(ChannelHandlerContext ctx) throws Exception;
+
+    /**
+     * 데이터가 읽혀졌을 때 호출됩니다.
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @param msg 읽은 메시지 객체
+     * @throws Exception 데이터 처리 중 발생할 수 있는 예외
+     */
+    void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception;
+
+    /**
+     * 읽기 완료 이벤트가 발생했을 때 호출됩니다.
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @throws Exception 이벤트 처리 중 발생할 수 있는 예외
+     */
+    void channelReadComplete(ChannelHandlerContext ctx) throws Exception;
+
+    /**
+     * 예외가 발생했을 때 호출됩니다.
+     *
+     * @param ctx   채널 핸들러 컨텍스트
+     * @param cause 발생한 예외
+     * @throws Exception 예외 처리 중 발생할 수 있는 예외
+     */
+    void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception;
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelInboundHandlerAdapter.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code ChannelInboundHandlerAdapter} 클래스는 {@link ChannelInboundHandler} 인터페이스의 기본 구현체를 제공합니다.
+ * <p>
+ * 이 클래스는 인바운드 이벤트 처리 메서드에 대해 기본적으로 아무런 동작도 수행하지 않으며,
+ * 하위 클래스에서 필요한 이벤트 처리 메서드만 오버라이드할 수 있도록 합니다.
+ * </p>
+ * 
+ * @see ChannelInboundHandler
+ * @see ChannelHandlerContext
+ * 
+ * @author 
+ * @version 1.0
+ */
+public class ChannelInboundHandlerAdapter implements ChannelInboundHandler {
+
+    /**
+     * 채널 활성화 이벤트에 대한 기본 구현.
+     * 하위 클래스에서 오버라이드하여 필요 시 추가 동작을 구현할 수 있습니다.
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @throws Exception 처리 중 발생 가능한 예외
+     */
+    @Override
+    public void channelActive(ChannelHandlerContext ctx) throws Exception {
+        // 기본 구현: 아무런 동작도 수행하지 않음.
+    }
+
+    /**
+     * 채널 비활성화 이벤트에 대한 기본 구현.
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @throws Exception 처리 중 발생 가능한 예외
+     */
+    @Override
+    public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+        // 기본 구현: 아무런 동작도 수행하지 않음.
+    }
+
+    /**
+     * 데이터 읽기 이벤트에 대한 기본 구현.
+     * 기본적으로 수신된 메시지를 다음 핸들러로 전달합니다.
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @param msg 수신된 메시지 객체
+     * @throws Exception 처리 중 발생 가능한 예외
+     */
+    @Override
+    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+        ctx.fireChannelRead(msg);
+    }
+
+    /**
+     * 읽기 완료 이벤트에 대한 기본 구현.
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @throws Exception 처리 중 발생 가능한 예외
+     */
+    @Override
+    public void channelReadComplete(ChannelHandlerContext ctx) throws Exception {
+        // 기본 구현: 아무런 동작도 수행하지 않음.
+    }
+
+    /**
+     * 예외 발생 이벤트에 대한 기본 구현.
+     * 기본적으로 예외를 다음 핸들러로 전달합니다.
+     *
+     * @param ctx   채널 핸들러 컨텍스트
+     * @param cause 발생한 예외
+     * @throws Exception 처리 중 발생 가능한 예외
+     */
+    @Override
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
+        ctx.fireExceptionCaught(cause);
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelInitializer.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code ChannelInitializer}는 새로 생성된 {@link Channel}의 초기 설정을 담당하기 위한 추상 클래스입니다.
+ * <p>
+ * 서브 클래스는 {@link #initChannel(Channel)} 메서드를 구현하여 해당 채널의 파이프라인 구성과 기타 초기화를 수행합니다.
+ * 초기화가 완료되면 {@code ChannelInitializer}는 파이프라인에서 자신을 제거하여 이후 이벤트 전달에 방해가 없도록 합니다.
+ * </p>
+ *
+ * @param <T> 초기화할 채널 타입, {@link Channel}의 하위 타입
+ * 
+ * @see ChannelInboundHandlerAdapter
+ * @see ChannelHandlerContext
+ * 
+ * @author 
+ * @version 1.0
+ */
+public abstract class ChannelInitializer<T extends Channel> extends ChannelInboundHandlerAdapter {
+
+    /**
+     * 채널이 파이프라인에 추가될 때 호출되며, 채널 초기화를 위한 {@link #initChannel(Channel)}을 수행합니다.
+     * 초기화 후 자신을 파이프라인에서 제거합니다.
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @throws Exception 초기화 과정에서 발생 가능한 예외
+     */
+    @Override
+    public final void handlerAdded(ChannelHandlerContext ctx) throws Exception {
+        try {
+            @SuppressWarnings("unchecked")
+            T channel = (T) ctx.channel();
+            initChannel(channel);
+        } finally {
+            // 초기화 후, 현재 핸들러를 파이프라인에서 제거하여 이후 이벤트 전달에 방해되지 않도록 합니다.
+            ctx.pipeline().remove(this);
+        }
+    }
+
+    /**
+     * 채널 초기화를 위한 추상 메서드.
+     * 서브 클래스는 이 메서드를 구현하여 채널 파이프라인 구성 및 초기 설정을 수행해야 합니다.
+     *
+     * @param channel 초기화할 채널
+     * @throws Exception 초기화 과정에서 발생 가능한 예외
+     */
+    protected abstract void initChannel(T channel) throws Exception;
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelOption.java
+
+package com.example.nionetty.channel;
+
+import java.util.Objects;
+
+/**
+ * {@code ChannelOption} 클래스는 채널 구성 옵션의 키를 나타냅니다.
+ * <p>
+ * 각 옵션은 {@code ChannelConfig}를 통해 설정될 수 있으며, 네트워크 소켓 옵션, 타임아웃 설정, 버퍼 크기 등 다양한 값들이 포함됩니다.
+ * </p>
+ *
+ * @param <T> 옵션 값의 타입
+ * 
+ * @author 
+ * @version 1.0
+ */
+public final class ChannelOption<T> {
+
+    /** 옵션의 이름 */
+    private final String name;
+
+    /**
+     * 생성자.
+     *
+     * @param name 옵션의 이름
+     */
+    private ChannelOption(String name) {
+        this.name = name;
+    }
+
+    /**
+     * 주어진 이름으로 {@code ChannelOption} 인스턴스를 생성합니다.
+     *
+     * @param name 옵션의 이름
+     * @param <T>  옵션 값의 타입
+     * @return 새로 생성된 {@code ChannelOption} 인스턴스
+     */
+    public static <T> ChannelOption<T> valueOf(String name) {
+        return new ChannelOption<>(name);
+    }
+
+    /**
+     * 옵션의 이름을 반환합니다.
+     *
+     * @return 옵션 이름
+     */
+    public String name() {
+        return name;
+    }
+
+    @Override
+    public String toString() {
+        return "ChannelOption{" + "name='" + name + '\'' + '}';
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (!(o instanceof ChannelOption)) {
+            return false;
+        }
+        ChannelOption<?> that = (ChannelOption<?>) o;
+        return Objects.equals(name, that.name);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(name);
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelOutboundHandler.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code ChannelOutboundHandler} 인터페이스는 아웃바운드 이벤트(데이터 쓰기, 플러시, 채널 종료 등)를 처리하기 위한 메서드를 정의합니다.
+ * <p>
+ * 이 인터페이스를 구현하는 핸들러는 채널 파이프라인에서 발생하는 아웃바운드 이벤트를 가로채거나 처리할 수 있습니다.
+ * 일반적으로 {@link ChannelOutboundHandlerAdapter}를 확장하여 기본 동작을 제공받고 필요에 따라 오버라이드합니다.
+ * </p>
+ *
+ * @see ChannelHandlerContext
+ * @see ChannelOutboundHandlerAdapter
+ * 
+ * @author 
+ * @version 1.0
+ */
+public interface ChannelOutboundHandler extends ChannelHandler {
+
+    /**
+     * 데이터를 채널을 통해 기록(write) 요청할 때 호출됩니다.
+     * <p>
+     * 핸들러는 전달된 메시지를 기록하거나, 필요에 따라 다른 핸들러로 전달할 수 있습니다.
+     * </p>
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @param msg 기록할 메시지 객체
+     * @return 기록 작업의 결과를 나타내는 {@link ChannelFuture} 객체
+     * @throws Exception 기록 작업 중 발생할 수 있는 예외
+     */
+    ChannelFuture write(ChannelHandlerContext ctx, Object msg) throws Exception;
+
+    /**
+     * 기록된 데이터를 실제 네트워크로 플러시(flush)할 때 호출됩니다.
+     * <p>
+     * 이 메서드는 기록 작업에 의해 임시로 보관된 데이터를 전송할 필요가 있을 때 사용됩니다.
+     * </p>
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @throws Exception 플러시 작업 중 발생할 수 있는 예외
+     */
+    void flush(ChannelHandlerContext ctx) throws Exception;
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelOutboundHandlerAdapter.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code ChannelOutboundHandlerAdapter} 클래스는 {@link ChannelOutboundHandler} 인터페이스의 기본 구현체를 제공합니다.
+ * <p>
+ * 기본 구현에서는 {@link #write(ChannelHandlerContext, Object)}와 {@link #flush(ChannelHandlerContext)} 메서드에서
+ * 받은 이벤트를 다음 핸들러로 전달하도록 되어 있어, 필요에 따라 오버라이드하여 커스텀 동작을 구현할 수 있습니다.
+ * </p>
+ *
+ * @see ChannelOutboundHandler
+ * @see ChannelHandlerContext
+ * 
+ * @author 
+ * @version 1.0
+ */
+public class ChannelOutboundHandlerAdapter implements ChannelOutboundHandler {
+
+    /**
+     * 데이터를 기록(write) 요청이 들어왔을 때, 기본적으로 이벤트를 다음 핸들러로 전달합니다.
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @param msg 기록할 메시지 객체
+     * @return 기록 작업의 결과를 나타내는 {@link ChannelFuture} 객체
+     * @throws Exception 기록 작업 중 발생할 수 있는 예외
+     */
+    @Override
+    public ChannelFuture write(ChannelHandlerContext ctx, Object msg) throws Exception {
+        return ctx.write(msg);
+    }
+
+    /**
+     * 플러시 요청이 들어왔을 때, 기본적으로 이벤트를 다음 핸들러로 전달합니다.
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @throws Exception 플러시 작업 중 발생할 수 있는 예외
+     */
+    @Override
+    public void flush(ChannelHandlerContext ctx) throws Exception {
+        // 기본 구현: 특별한 처리 없이 단순히 플러시 이벤트를 전달
+        ctx.fireChannelReadComplete();
+    }
+
+    /**
+     * 핸들러가 채널 파이프라인에 추가될 때 호출되는 기본 구현입니다.
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @throws Exception 핸들러 추가 중 발생할 수 있는 예외
+     */
+    @Override
+    public void handlerAdded(ChannelHandlerContext ctx) throws Exception {
+        // 기본 구현: 아무런 작업 수행하지 않음.
+    }
+
+    /**
+     * 핸들러가 채널 파이프라인에서 제거될 때 호출되는 기본 구현입니다.
+     *
+     * @param ctx 채널 핸들러 컨텍스트
+     * @throws Exception 핸들러 제거 중 발생할 수 있는 예외
+     */
+    @Override
+    public void handlerRemoved(ChannelHandlerContext ctx) throws Exception {
+        // 기본 구현: 아무런 작업 수행하지 않음.
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelPipeline.java
+
+package com.example.nionetty.channel;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Iterator;
+
+/**
+ * {@code ChannelPipeline} 클래스는 채널 핸들러들을 순차적으로 관리하며,
+ * 발생하는 모든 이벤트를 핸들러 체인에 따라 전달합니다.
+ * <p>
+ * 핸들러들은 파이프라인에 등록된 순서대로 이벤트를 처리하며,
+ * 각 핸들러는 {@link ChannelHandlerContext}를 통해 다음 핸들러로 이벤트를 전달할 수 있습니다.
+ * </p>
+ *
+ * 예를 들어, 채널의 읽기, 쓰기, 예외 처리 등의 이벤트가 발생하면
+ * 파이프라인 내의 각 핸들러가 순차적으로 호출되어 이벤트를 처리합니다.
+ *
+ * @see ChannelHandler
+ * @see ChannelHandlerContext
+ * 
+ * @author 
+ * @version 1.0
+ */
+public class ChannelPipeline {
+
+    /** 이 파이프라인에 등록된 핸들러들의 리스트 */
+    private final List<ChannelHandler> handlers = new ArrayList<>();
+
+    /** 소속된 채널 */
+    private final Channel channel;
+
+    /**
+     * {@code ChannelPipeline} 생성자.
+     *
+     * @param channel 이 파이프라인이 소속될 {@link Channel}
+     */
+    public ChannelPipeline(Channel channel) {
+        this.channel = channel;
+    }
+
+    /**
+     * 파이프라인에 핸들러를 추가합니다.
+     *
+     * @param handler 추가할 {@link ChannelHandler} 객체
+     * @return 현재 파이프라인 인스턴스 (빌더 패턴 지원)
+     */
+    public ChannelPipeline addLast(ChannelHandler handler) {
+        handlers.add(handler);
+        // 핸들러가 추가될 때 호출
+        try {
+            // 새로 추가된 핸들러에 handlerAdded 이벤트 전달
+            ChannelHandlerContext ctx = new DefaultChannelHandlerContext(this, handler);
+            handler.handlerAdded(ctx);
+        } catch (Exception e) {
+            // handlerAdded 호출 중 예외 발생 시 처리 (실제 구현에서는 로깅 처리)
+            e.printStackTrace();
+        }
+        return this;
+    }
+
+    /**
+     * 파이프라인에서 지정된 핸들러를 제거합니다.
+     *
+     * @param handler 제거할 {@link ChannelHandler} 객체
+     * @return 현재 파이프라인 인스턴스
+     */
+    public ChannelPipeline remove(ChannelHandler handler) {
+        handlers.remove(handler);
+        return this;
+    }
+
+    /**
+     * 다음 핸들러에게 읽기 이벤트를 전달합니다.
+     * <p>
+     * 실제 구현에서는 현재 컨텍스트 다음의 핸들러를 찾아 {@code fireChannelRead()}를 호출해야 합니다.
+     * 이 예제에서는 단순히 모든 핸들러에 순차적으로 이벤트를 전달합니다.
+     * </p>
+     *
+     * @param msg 전달할 메시지 객체
+     */
+    public void fireChannelRead(Object msg) {
+        for (ChannelHandler handler : handlers) {
+            // 실제 사용 시, 각 핸들러에 대한 Context를 통한 호출 필요
+            if (handler instanceof ChannelInboundHandler) {
+                try {
+                    ChannelHandlerContext ctx = new DefaultChannelHandlerContext(this, handler);
+                    ((ChannelInboundHandler) handler).channelRead(ctx, msg);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    /**
+     * 반환된 채널 객체를 제공합니다.
+     *
+     * @return 소속 {@link Channel} 객체
+     */
+    public Channel channel() {
+        return channel;
+    }
+
+    /**
+     * 파이프라인에 등록된 핸들러의 반복자를 반환합니다.
+     *
+     * @return {@link Iterator} 형태의 핸들러 반복자
+     */
+    public Iterator<ChannelHandler> iterator() {
+        return handlers.iterator();
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/ChannelPromise.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code ChannelPromise} 추상 클래스는 채널 비동기 작업의 결과를 설정할 수 있는 메서드를 정의합니다.
+ */
+public abstract class ChannelPromise extends ChannelFuture {
+
+    /**
+     * 작업이 성공적으로 완료되었음을 설정합니다.
+     *
+     * @return 현재 {@code ChannelPromise} 인스턴스
+     */
+    public abstract ChannelPromise setSuccess();
+
+    /**
+     * 작업 실패 시, 원인 예외를 설정합니다.
+     *
+     * @param cause 작업 실패 원인 예외
+     * @return 현재 {@code ChannelPromise} 인스턴스
+     */
+    public abstract ChannelPromise setFailure(Throwable cause);
+
+    /**
+     * 조건부로 작업 성공을 시도합니다.
+     *
+     * @return 성공하면 {@code true}, 이미 완료되었다면 {@code false}
+     */
+    public abstract boolean trySuccess();
+
+    /**
+     * 조건부로 작업 실패를 시도합니다.
+     *
+     * @param cause 작업 실패 원인 예외
+     * @return 실패 설정에 성공하면 {@code true}, 이미 완료되었다면 {@code false}
+     */
+    public abstract boolean tryFailure(Throwable cause);
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/DefaultChannelConfig.java
+
+package com.example.nionetty.channel;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * {@code DefaultChannelConfig} 클래스는 {@link ChannelConfig} 인터페이스의 기본 구현을 제공합니다.
+ * 내부적으로 옵션들을 {@code Map}으로 관리합니다.
+ * 
+ * @author 
+ * @version 1.0
+ */
+public class DefaultChannelConfig implements ChannelConfig {
+
+    private final Map<ChannelOption<?>, Object> options = new HashMap<>();
+
+    @Override
+    public <T> void setOption(ChannelOption<T> option, T value) {
+        options.put(option, value);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> T getOption(ChannelOption<T> option) {
+        return (T) options.get(option);
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/DefaultChannelHandlerContext.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code DefaultChannelHandlerContext} 클래스는 {@link ChannelHandlerContext}의 기본
+ * 구현체입니다.
+ */
+public class DefaultChannelHandlerContext implements ChannelHandlerContext {
+
+    private final ChannelPipeline pipeline;
+    private final ChannelHandler handler;
+    private final Channel channel;
+
+    public DefaultChannelHandlerContext(ChannelPipeline pipeline, ChannelHandler handler) {
+        this.pipeline = pipeline;
+        this.handler = handler;
+        this.channel = pipeline.channel();
+    }
+
+    @Override
+    public void fireChannelRead(Object msg) {
+        // 다음 핸들러에 이벤트 전달 (단순 예제)
+        // 실제 구현에서는 순서를 관리해야 합니다.
+    }
+
+    @Override
+    public ChannelFuture write(Object msg) {
+        // 이제 Channel 인터페이스에 write(msg)가 정의되어 있으므로 호출 가능
+        return channel.write(msg);
+    }
+
+    @Override
+    public void fireExceptionCaught(Throwable cause) {
+        // 다음 핸들러에 예외 전달 (단순 예제)
+        cause.printStackTrace();
+    }
+
+    @Override
+    public ChannelPipeline pipeline() {
+        return pipeline;
+    }
+
+    @Override
+    public Channel channel() {
+        return channel;
+    }
+
+    @Override
+    public void fireChannelReadComplete() {
+        // 다음 핸들러에 읽기 완료 이벤트 전달 (단순 예제)
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/DefaultChannelId.java
+
+package com.example.nionetty.channel;
+
+import java.util.UUID;
+
+/**
+ * {@code DefaultChannelId} 클래스는 채널의 고유 식별자를 {@code UUID} 기반으로 생성하는 기본 구현체입니다.
+ * 짧은 식별자와 전체 식별자 문자열을 제공합니다.
+ * 
+ * @author 
+ * @version 1.0
+ */
+public final class DefaultChannelId implements ChannelId {
+
+    private final String id;
+
+    /**
+     * 기본 생성자로 {@code UUID}를 기반으로 한 식별자를 생성합니다.
+     */
+    public DefaultChannelId() {
+        this.id = UUID.randomUUID().toString();
+    }
+
+    @Override
+    public String asShortText() {
+        return id.substring(0, 8);
+    }
+
+    @Override
+    public String asLongText() {
+        return id;
+    }
+
+    @Override
+    public String toString() {
+        return asLongText();
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/DefaultChannelPipeline.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code DefaultChannelPipeline} 클래스는 {@link ChannelPipeline}의 기본 구현체입니다.
+ * 별도의 추가 로직 없이 부모 클래스의 기능을 그대로 사용합니다.
+ * 
+ * @author 
+ * @version 1.0
+ */
+public class DefaultChannelPipeline extends ChannelPipeline {
+
+    /**
+     * 생성자로 소속 채널을 받아 파이프라인을 초기화합니다.
+     * 
+     * @param channel 소속 채널
+     */
+    public DefaultChannelPipeline(Channel channel) {
+        super(channel);
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/DefaultChannelPromise.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code DefaultChannelPromise} 클래스는 {@code ChannelPromise}의 기본 구현체입니다.
+ */
+public class DefaultChannelPromise extends ChannelPromise {
+
+    @Override
+    public DefaultChannelPromise setSuccess() {
+        synchronized (lock) {
+            if (!isDone()) {
+                this.success = true;
+                lock.notifyAll();
+            }
+        }
+        return this;
+    }
+
+    @Override
+    public DefaultChannelPromise setFailure(Throwable cause) {
+        synchronized (lock) {
+            if (!isDone()) {
+                this.cause = cause;
+                lock.notifyAll();
+            }
+        }
+        return this;
+    }
+
+    @Override
+    public boolean trySuccess() {
+        if (!isDone()) {
+            setSuccess();
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public boolean tryFailure(Throwable cause) {
+        if (!isDone()) {
+            setFailure(cause);
+            return true;
+        }
+        return false;
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/nio/NioEventLoop.java
+
+package com.example.nionetty.channel.nio;
+
+import com.example.nionetty.eventloop.EventLoop;
+
+import java.io.IOException;
+import java.nio.channels.Selector;
+import java.util.Iterator;
+import java.util.Set;
+
+/**
+ * {@code NioEventLoop} 클래스는 NIO 기반의 이벤트 루프를 구현합니다.
+ */
+public class NioEventLoop implements EventLoop {
+
+    /** NIO 셀렉터 객체 */
+    private final Selector selector;
+
+    /**
+     * {@code NioEventLoop} 생성자.
+     *
+     * @throws IOException 셀렉터 초기화 중 발생할 수 있는 예외
+     */
+    public NioEventLoop() throws IOException {
+        this.selector = Selector.open();
+    }
+
+    @Override
+    public void loop() {
+        while (true) {
+            try {
+                int readyChannels = selector.select();
+                if (readyChannels == 0) {
+                    continue;
+                }
+                Set<java.nio.channels.SelectionKey> selectedKeys = selector.selectedKeys();
+                Iterator<java.nio.channels.SelectionKey> keyIterator = selectedKeys.iterator();
+                while (keyIterator.hasNext()) {
+                    java.nio.channels.SelectionKey key = keyIterator.next();
+                    // TODO: 각 SelectionKey에 대해 읽기/쓰기/연결 수락 이벤트 처리 로직 구현 필요
+                    keyIterator.remove();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+                break;
+            }
+        }
+    }
+
+    @Override
+    public void shutdown() {
+        try {
+            selector.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * 현재 {@link Selector} 객체를 반환합니다.
+     *
+     * @return 내부 {@link Selector} 객체
+     */
+    public Selector selector() {
+        return selector;
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/nio/NioEventLoopGroup.java
+
+package com.example.nionetty.channel.nio;
+
+import com.example.nionetty.eventloop.EventLoop;
+import com.example.nionetty.eventloop.EventLoopGroup;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * {@code NioEventLoopGroup} 클래스는 여러 개의 {@link NioEventLoop}을 관리하는 이벤트 루프 그룹입니다.
+ * <p>
+ * 이 클래스는 여러 I/O 작업을 병렬로 처리하기 위해 지정된 개수만큼의 이벤트 루프를 생성하고,
+ * 라운드 로빈 방식 등으로 작업을 분배합니다.
+ * </p>
+ *
+ * @see com.example.nionetty.eventloop.EventLoopGroup
+ * 
+ * @author
+ * @version 1.0
+ */
+public class NioEventLoopGroup implements EventLoopGroup {
+
+    /** 관리하는 이벤트 루프 목록 */
+    private final List<EventLoop> eventLoops;
+
+    /** 생성된 이벤트 루프 수 */
+    private final int nThreads;
+
+    /**
+     * 생성자.
+     * 지정한 스레드 수 만큼의 {@link NioEventLoop}을 생성합니다.
+     *
+     * @param nThreads 생성할 이벤트 루프의 수
+     * @throws IOException 이벤트 루프 생성 중 발생할 수 있는 I/O 예외
+     */
+    public NioEventLoopGroup(int nThreads) throws IOException {
+        this.nThreads = nThreads;
+        this.eventLoops = new ArrayList<>(nThreads);
+        for (int i = 0; i < nThreads; i++) {
+            eventLoops.add(new NioEventLoop());
+        }
+    }
+
+    /**
+     * 기본 생성자.
+     * 생성할 이벤트 루프의 수는 CPU 코어 수를 기반으로 합니다.
+     *
+     * @throws IOException 이벤트 루프 생성 중 발생할 수 있는 I/O 예외
+     */
+    public NioEventLoopGroup() throws IOException {
+        this(Runtime.getRuntime().availableProcessors());
+    }
+
+    /**
+     * 라운드 로빈 방식으로 다음 {@link EventLoop} 객체를 반환합니다.
+     * <p>
+     * 실제 구현에서는 각 호출 시마다 순환 인덱스를 갱신하여 분배해야 하나,
+     * 여기서는 단순 예제로 첫 번째 이벤트 루프를 반환합니다.
+     * </p>
+     *
+     * @return 선택된 {@link EventLoop} 객체
+     */
+    @Override
+    public EventLoop next() {
+        return eventLoops.get(0);
+    }
+
+    /**
+     * 그룹에 속한 모든 이벤트 루프를 정상 종료합니다.
+     * <p>
+     * 실제 구현에서는 각 이벤트 루프에 종료 신호를 보내고 자원 해제 작업을 수행해야 합니다.
+     * </p>
+     */
+    @Override
+    public void shutdownGracefully() {
+        // 단순 예제: 이벤트 루프 종료 로직 구현 필요
+        for (EventLoop loop : eventLoops) {
+            // 예: loop.shutdown();
+        }
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/nio/NioServerSocketChannel.java
+
+package com.example.nionetty.channel.nio;
+
+import com.example.nionetty.channel.AbstractChannel;
+import com.example.nionetty.channel.ChannelConfig;
+import com.example.nionetty.channel.ChannelFuture;
+import com.example.nionetty.channel.ChannelId;
+import java.net.SocketAddress;
+import java.nio.channels.ServerSocketChannel;
+import java.io.IOException;
+
+/**
+ * {@code NioServerSocketChannel} 클래스는 서버 소켓 채널의 NIO 기반 구현체입니다.
+ * 실제 구현에서는 java.nio.channels.ServerSocketChannel을 내부적으로 사용하여
+ * 소켓 바인딩 및 연결 수락을 수행합니다.
+ */
+public class NioServerSocketChannel extends AbstractChannel {
+
+    private ServerSocketChannel javaChannel;
+
+    public NioServerSocketChannel(ChannelId id, ChannelConfig config) {
+        super(id, config);
+    }
+
+    @Override
+    public ChannelFuture bind(SocketAddress localAddress) {
+        ChannelFuture future = new ChannelFuture();
+        try {
+            // ServerSocketChannel 생성 및 비블로킹 모드 설정
+            javaChannel = ServerSocketChannel.open();
+            javaChannel.configureBlocking(false);
+            javaChannel.socket().bind(localAddress);
+            future.setSuccess().setChannel(this);
+        } catch (IOException e) {
+            future.setFailure(e);
+        }
+        return future;
+    }
+
+    @Override
+    public ChannelFuture close() {
+        ChannelFuture future = new ChannelFuture();
+        try {
+            if (javaChannel != null) {
+                javaChannel.close();
+            }
+            // 채널 종료 후 closeFuture를 성공으로 처리
+            closeFuture.setSuccess();
+            future.setSuccess();
+        } catch (IOException e) {
+            future.setFailure(e);
+        }
+        return future;
+    }
+
+    @Override
+    public ChannelFuture write(Object msg) {
+        // 서버 소켓 채널에서는 일반적으로 write 연산이 없으므로, 단순 로그 출력
+        System.out.println("NioServerSocketChannel write invoked with message: " + msg);
+        return new ChannelFuture().setSuccess();
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/nio/NioSocketChannel.java
+
+package com.example.nionetty.channel.nio;
+
+import com.example.nionetty.channel.AbstractChannel;
+import com.example.nionetty.channel.ChannelConfig;
+import com.example.nionetty.channel.ChannelFuture;
+import com.example.nionetty.channel.ChannelId;
+import java.net.SocketAddress;
+import java.nio.channels.SocketChannel;
+import java.io.IOException;
+
+/**
+ * {@code NioSocketChannel} 클래스는 클라이언트 소켓 채널의 NIO 기반 구현체입니다.
+ * 이 클래스는 클라이언트와의 연결 및 I/O 처리를 담당하며,
+ * java.nio.channels.SocketChannel을 내부적으로 사용합니다.
+ */
+public class NioSocketChannel extends AbstractChannel {
+
+    private SocketChannel javaChannel;
+
+    public NioSocketChannel(ChannelId id, ChannelConfig config) {
+        super(id, config);
+    }
+
+    @Override
+    public ChannelFuture bind(SocketAddress localAddress) {
+        ChannelFuture future = new ChannelFuture();
+        try {
+            // SocketChannel 생성 및 비블로킹 모드 설정
+            javaChannel = SocketChannel.open();
+            javaChannel.configureBlocking(false);
+            javaChannel.bind(localAddress);
+            future.setSuccess().setChannel(this);
+        } catch (IOException e) {
+            future.setFailure(e);
+        }
+        return future;
+    }
+
+    @Override
+    public ChannelFuture close() {
+        ChannelFuture future = new ChannelFuture();
+        try {
+            if (javaChannel != null) {
+                javaChannel.close();
+            }
+            closeFuture.setSuccess();
+            future.setSuccess();
+        } catch (IOException e) {
+            future.setFailure(e);
+        }
+        return future;
+    }
+
+    @Override
+    public ChannelFuture write(Object msg) {
+        // 간단한 임시 구현: 메시지를 문자열로 변환하여 콘솔에 출력
+        System.out.println("NioSocketChannel writing: " + msg);
+        // 실제 구현에서는 javaChannel.write(ByteBuffer.wrap(...)) 등을 사용
+        return new ChannelFuture().setSuccess().setChannel(this);
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/channel/VoidChannelPromise.java
+
+package com.example.nionetty.channel;
+
+/**
+ * {@code VoidChannelPromise} 클래스는 아무런 동작도 하지 않는 특수 {@link ChannelPromise}
+ * 구현체입니다.
+ * 주로 결과에 대한 처리가 필요 없는 경우 사용합니다.
+ */
+public final class VoidChannelPromise extends DefaultChannelPromise {
+
+    private static final VoidChannelPromise INSTANCE = new VoidChannelPromise();
+
+    private VoidChannelPromise() {
+    }
+
+    /**
+     * 유일한 {@code VoidChannelPromise} 인스턴스를 반환합니다.
+     * 
+     * @return {@code VoidChannelPromise} 인스턴스
+     */
+    public static VoidChannelPromise getInstance() {
+        return INSTANCE;
+    }
+
+    @Override
+    public VoidChannelPromise setSuccess() {
+        // 아무 동작도 하지 않음
+        return this;
+    }
+
+    @Override
+    public VoidChannelPromise setFailure(Throwable cause) {
+        // 아무 동작도 하지 않음
+        return this;
+    }
+
+    @Override
+    public boolean trySuccess() {
+        return true;
+    }
+
+    @Override
+    public boolean tryFailure(Throwable cause) {
+        return true;
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/eventloop/EventLoop.java
+
+package com.example.nionetty.eventloop;
+
+/**
+ * {@code EventLoop} 인터페이스는 채널의 I/O 이벤트를 처리하는 루프를 정의합니다.
+ * <p>
+ * 이벤트 루프는 {@link java.nio.channels.Selector}를 활용하여 등록된 채널의 I/O 이벤트를 감지하고,
+ * 해당 이벤트를 적절히 처리하는 로직을 구현합니다.
+ * </p>
+ *
+ * @see EventLoopGroup
+ * 
+ * @author 
+ * @version 1.0
+ */
+public interface EventLoop {
+
+    /**
+     * 이벤트 루프를 실행하여 I/O 이벤트를 처리합니다.
+     * <p>
+     * 이 메서드는 보통 별도의 스레드에서 호출되며,
+     * 루프 내에서 지속적으로 이벤트를 감시하고 처리합니다.
+     * </p>
+     */
+    void loop();
+
+    /**
+     * 이벤트 루프를 종료하고 자원을 해제합니다.
+     * <p>
+     * 실제 구현에서는 종료 신호를 받고, 안전하게 모든 작업을 마친 후 반환해야 합니다.
+     * </p>
+     */
+    void shutdown();
+}
+
+
+// ./src/main/java/com/example/nionetty/eventloop/EventLoopGroup.java
+
+package com.example.nionetty.eventloop;
+
+/**
+ * {@code EventLoopGroup} 인터페이스는 여러 {@link EventLoop} 인스턴스를 관리합니다.
+ * <p>
+ * 이 인터페이스는 작업을 여러 이벤트 루프에 분배하거나,
+ * 그룹 내의 모든 이벤트 루프를 종료하는 등의 작업을 수행하기 위한 메서드를 정의합니다.
+ * </p>
+ * 
+ * @see EventLoop
+ * 
+ * @author 
+ * @version 1.0
+ */
+public interface EventLoopGroup {
+
+    /**
+     * 그룹 내의 다음 {@link EventLoop} 인스턴스를 반환합니다.
+     * <p>
+     * 일반적으로 라운드 로빈 방식 또는 다른 분배 알고리즘을 사용하여 반환합니다.
+     * </p>
+     *
+     * @return 선택된 {@link EventLoop} 인스턴스
+     */
+    EventLoop next();
+
+    /**
+     * 그룹 내의 모든 이벤트 루프를 정상 종료합니다.
+     * <p>
+     * 각 이벤트 루프에 종료 신호를 보내고 자원을 해제해야 합니다.
+     * </p>
+     */
+    void shutdownGracefully();
+}
+
+
+// ./src/main/java/com/example/nionetty/eventloop/SingleThreadEventLoop.java
+
+package com.example.nionetty.eventloop;
+
+import java.io.IOException;
+import java.nio.channels.Selector;
+import java.nio.channels.SelectionKey;
+import java.util.Iterator;
+import java.util.Set;
+
+/**
+ * {@code SingleThreadEventLoop} 클래스는 단일 스레드에서 I/O 이벤트를 처리하는 이벤트 루프를 구현합니다.
+ * <p>
+ * 이 클래스는 {@link EventLoop} 인터페이스를 구현하며, 내부적으로 {@link Selector}를 사용하여
+ * 채널의 I/O 이벤트를 감시하고 처리합니다. 단일 스레드 환경에서 실행되며, 간단한 I/O 이벤트 처리가 필요한 경우에 사용됩니다.
+ * </p>
+ * <p>
+ * 실제 운영 환경에서는 보다 정교한 에러 처리, 태스크 큐 관리 및 스레드 생명 주기 관리가 필요할 수 있습니다.
+ * </p>
+ *
+ * @see EventLoop
+ * 
+ * @author
+ * @version 1.0
+ */
+public class SingleThreadEventLoop implements EventLoop {
+
+    /** 내부에서 사용하는 NIO {@link Selector} 객체 */
+    private final Selector selector;
+
+    /** 이벤트 루프의 실행 상태 플래그 */
+    private volatile boolean running;
+
+    /** 이벤트 루프를 실행하는 스레드 */
+    private final Thread thread;
+
+    /**
+     * {@code SingleThreadEventLoop} 생성자.
+     * 내부 {@code Selector}를 초기화하고, 별도의 스레드에서 이벤트 루프를 실행합니다.
+     *
+     * @throws IOException {@link Selector} 생성 중 발생할 수 있는 I/O 예외
+     */
+    public SingleThreadEventLoop() throws IOException {
+        this.selector = Selector.open();
+        this.running = true;
+        this.thread = new Thread(this::loop, "SingleThreadEventLoop");
+        this.thread.start();
+    }
+
+    /**
+     * 이벤트 루프를 실행하여 I/O 이벤트를 지속적으로 처리합니다.
+     * <p>
+     * 이 메서드는 {@code running} 플래그가 {@code true}인 동안 반복하면서,
+     * {@link Selector}를 통해 I/O 이벤트를 감시하고, 적절한 핸들러로 이벤트를 전달합니다.
+     * 현재 예시에서는 단순하게 선택된 키들을 순회하며, 키 처리 후에는 {@code cancel} 처리를 수행합니다.
+     * </p>
+     */
+    @Override
+    public void loop() {
+        while (running) {
+            try {
+                int readyChannels = selector.select(1000); // 1초 대기
+                if (readyChannels == 0) {
+                    continue;
+                }
+                Set<SelectionKey> selectedKeys = selector.selectedKeys();
+                Iterator<SelectionKey> keyIterator = selectedKeys.iterator();
+                while (keyIterator.hasNext()) {
+                    SelectionKey key = keyIterator.next();
+                    // TODO: 각 SelectionKey에 대해 실제 I/O 이벤트 처리를 구현합니다.
+                    // 예) 읽기, 쓰기, 연결 수락 등의 이벤트 처리
+                    keyIterator.remove();
+                }
+            } catch (IOException e) {
+                // 실제 구현에서는 로깅 등을 통해 에러를 기록하고 적절히 처리합니다.
+                e.printStackTrace();
+            }
+        }
+    }
+
+    /**
+     * 이벤트 루프를 종료하고 내부 자원을 해제합니다.
+     * <p>
+     * 호출 시 {@code running} 플래그를 {@code false}로 설정하고, {@link Selector}를 닫아
+     * 이벤트 루프가 안전하게 종료되도록 합니다.
+     * </p>
+     */
+    @Override
+    public void shutdown() {
+        running = false;
+        try {
+            selector.close();
+        } catch (IOException e) {
+            // 실제 구현에서는 에러 로깅 처리 필요
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * 현재 이벤트 루프에서 사용 중인 {@link Selector} 객체를 반환합니다.
+     *
+     * @return 내부 {@link Selector} 객체
+     */
+    public Selector selector() {
+        return this.selector;
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/handler/EchoServerHandler.java
+
+package com.example.nionetty.handler;
+
+import com.example.nionetty.channel.ChannelHandlerContext;
+import com.example.nionetty.channel.ChannelInboundHandlerAdapter;
+
+/**
+ * {@code EchoServerHandler} 클래스는 클라이언트로부터 수신한 메시지를 그대로 반환하는 에코 서버 핸들러입니다.
+ * 간단한 테스트용으로 사용되며, 실제 구현에서는 추가적인 로직을 포함할 수 있습니다.
+ * 
+ * (예제)
+ * 
+ * @author 
+ * @version 1.0
+ */
+public class EchoServerHandler extends ChannelInboundHandlerAdapter {
+
+    @Override
+    public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+        // 받은 메시지를 그대로 기록(write)하여 에코 처리
+        ctx.write(msg);
+    }
+
+    @Override
+    public void channelReadComplete(ChannelHandlerContext ctx) throws Exception {
+        // 모든 메시지 처리 후 플러시하여 전송 완료
+        ctx.fireChannelReadComplete();
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/util/concurrent/AbstractExecutorService.java
+
+package com.example.nionetty.util.concurrent;
+
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * {@code AbstractExecutorService} 클래스는 {@link ExecutorService} 인터페이스의
+ * 기본 메서드들을 플레이스홀더 형태로 구현합니다.
+ * 실제 구현 시에는 스레드 풀 관리 및 작업 큐 처리 로직을 추가해야 합니다.
+ * 
+ * (플레이스홀더)
+ * 
+ * @author 
+ * @version 1.0
+ */
+public abstract class AbstractExecutorService implements ExecutorService {
+
+    @Override
+    public void shutdown() {}
+
+    @Override
+    public List<Runnable> shutdownNow() {
+        return null;
+    }
+
+    @Override
+    public boolean isShutdown() {
+        return false;
+    }
+
+    @Override
+    public boolean isTerminated() {
+        return false;
+    }
+
+    @Override
+    public boolean awaitTermination(long timeout, TimeUnit unit) {
+        return false;
+    }
+
+    // submit(), invokeAll() 등 다른 메서드들도 필요 시 구현합니다.
+}
+
+
+// ./src/main/java/com/example/nionetty/util/concurrent/AbstractScheduledEventExecutor.java
+
+package com.example.nionetty.util.concurrent;
+
+import java.util.List;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * {@code AbstractScheduledEventExecutor} 클래스는 {@link ScheduledExecutorService} 인터페이스의
+ * 기본 구현체로, 예약 작업 실행에 필요한 메서드들을 플레이스홀더 형태로 제공합니다.
+ * 
+ * (플레이스홀더)
+ * 
+ * @author 
+ * @version 1.0
+ */
+public abstract class AbstractScheduledEventExecutor implements ScheduledExecutorService {
+
+    @Override
+    public void shutdown() {}
+
+    @Override
+    public List<Runnable> shutdownNow() {
+        return null;
+    }
+
+    @Override
+    public boolean isShutdown() {
+        return false;
+    }
+
+    @Override
+    public boolean isTerminated() {
+        return false;
+    }
+
+    @Override
+    public boolean awaitTermination(long timeout, TimeUnit unit) {
+        return false;
+    }
+
+    // 예약 작업 관련 메서드들도 필요 시 구현합니다.
+}
+
+
+// ./src/main/java/com/example/nionetty/util/concurrent/DefaultPromise.java
+
+package com.example.nionetty.util.concurrent;
+
+import com.example.nionetty.util.Future;
+import com.example.nionetty.util.Promise;
+
+/**
+ * {@code DefaultPromise} 클래스는 {@link Promise} 인터페이스의 기본 구현체입니다.
+ * 채널이나 이벤트 루프와 관련된 비동기 작업에서 사용될 수 있습니다.
+ * 
+ * @author 
+ * @version 1.0
+ */
+public class DefaultPromise implements Promise {
+
+    private volatile boolean success;
+    private volatile Throwable cause;
+    private final Object lock = new Object();
+
+    @Override
+    public boolean isDone() {
+        return success || (cause != null);
+    }
+
+    @Override
+    public boolean isSuccess() {
+        return success;
+    }
+
+    @Override
+    public Throwable getCause() {
+        return cause;
+    }
+
+    @Override
+    public Future sync() throws InterruptedException {
+        synchronized (lock) {
+            while (!isDone()) {
+                lock.wait();
+            }
+        }
+        return this;
+    }
+
+    @Override
+    public Promise setSuccess() {
+        synchronized (lock) {
+            this.success = true;
+            lock.notifyAll();
+        }
+        return this;
+    }
+
+    @Override
+    public Promise setFailure(Throwable cause) {
+        synchronized (lock) {
+            this.cause = cause;
+            lock.notifyAll();
+        }
+        return this;
+    }
+}
+
+
+// ./src/main/java/com/example/nionetty/util/Future.java
+
+package com.example.nionetty.util;
+
+/**
+ * {@code Future} 인터페이스는 비동기 작업의 결과를 나타냅니다.
+ * 완료 여부, 성공 상태, 실패 원인 등을 확인할 수 있습니다.
+ * 
+ * @author 
+ * @version 1.0
+ */
+public interface Future {
+    /**
+     * 비동기 작업이 완료되었는지 여부를 반환합니다.
+     *
+     * @return 완료 시 {@code true}
+     */
+    boolean isDone();
+
+    /**
+     * 작업이 성공적으로 완료되었는지 여부를 반환합니다.
+     *
+     * @return 성공 시 {@code true}
+     */
+    boolean isSuccess();
+
+    /**
+     * 작업 실패의 원인 예외를 반환합니다.
+     *
+     * @return 실패 원인 예외, 작업이 성공했다면 {@code null}
+     */
+    Throwable getCause();
+
+    /**
+     * 작업 완료까지 동기적으로 대기합니다.
+     *
+     * @return 현재 {@code Future} 인스턴스
+     * @throws InterruptedException 대기 중 인터럽트 발생 시
+     */
+    Future sync() throws InterruptedException;
+}
+
+
+// ./src/main/java/com/example/nionetty/util/GenericFutureListener.java
+
+package com.example.nionetty.util;
+
+/**
+ * {@code GenericFutureListener} 인터페이스는 {@link Future} 완료 시 실행할 리스너를 정의합니다.
+ *
+ * @param <F> {@link Future} 타입
+ * 
+ * @author 
+ * @version 1.0
+ */
+public interface GenericFutureListener<F extends Future> {
+    /**
+     * Future 작업 완료 후 호출됩니다.
+     *
+     * @param future 완료된 {@link Future} 객체
+     * @throws Exception 작업 완료 처리 중 발생할 수 있는 예외
+     */
+    void operationComplete(F future) throws Exception;
+}
+
+
+// ./src/main/java/com/example/nionetty/util/Promise.java
+
+package com.example.nionetty.util;
+
+/**
+ * {@code Promise} 인터페이스는 {@link Future}를 확장하여,
+ * 비동기 작업의 결과를 설정할 수 있는 메서드를 추가로 제공합니다.
+ * 
+ * @author 
+ * @version 1.0
+ */
+public interface Promise extends Future {
+    /**
+     * 작업이 성공적으로 완료되었음을 설정합니다.
+     *
+     * @return 현재 {@code Promise} 인스턴스
+     */
+    Promise setSuccess();
+
+    /**
+     * 작업 실패 시, 원인 예외를 설정합니다.
+     *
+     * @param cause 작업 실패 원인 예외
+     * @return 현재 {@code Promise} 인스턴스
+     */
+    Promise setFailure(Throwable cause);
+}
+
+
